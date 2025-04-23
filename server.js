@@ -146,9 +146,15 @@ app.use(session({
 console.log(`Express session configured using ${IS_PRODUCTION ? 'PostgreSQL store' : 'MemoryStore (default)'}.`);
 
 // --- Google Clients ---
+console.log(`--- Initializing OAuth2 Client ---`); // Add log
+console.log(`Using CLIENT_ID: ${CLIENT_ID ? 'Set' : 'MISSING!'}`); // Add log
+console.log(`Using CLIENT_SECRET: ${CLIENT_SECRET ? 'Set' : 'MISSING!'}`); // Add log
+console.log(`Using REDIRECT_URI: ${REDIRECT_URI}`); // *** Add this critical log ***
+
 const oauth2Client = new google.auth.OAuth2(CLIENT_ID, CLIENT_SECRET, REDIRECT_URI);
 const visionClient = new vision.ImageAnnotatorClient(); // Uses ADC implicitly
 const googleOAuth2 = google.oauth2('v2');
+console.log(`--- OAuth2 Client Initialized ---`); 
 
 // --- Multer Setup ---
 const storage = multer.memoryStorage();
