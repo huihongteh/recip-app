@@ -476,15 +476,9 @@ function extractReceiptData(text) {
 }
 
 // --- Start Server ---
-app.listen(PORT, () => {
-    console.log(`Server listening at http://localhost:${PORT}`);
+app.listen(PORT, '0.0.0.0', () => {
+    console.log(`Server listening on port ${PORT}`);
+    console.log(`--------------------------------------------------------------`);
+    console.log(`Access locally:      http://localhost:${PORT}`);
+    console.log(`--------------------------------------------------------------`);
 });
-
-// app.listen(PORT, '0.0.0.0', () => {
-//     console.log(`Server listening on port ${PORT}`);
-//     console.log(`--------------------------------------------------------------`);
-//     console.log(`Access locally:      http://localhost:${PORT}`);
-//     console.log(`Access on network:   http://YOUR_MAC_IP:${PORT} (Replace YOUR_MAC_IP)`);
-//     console.log(`--------------------------------------------------------------`);
-//     console.log(`Ensure YOUR_MAC_IP is added to Google Cloud Console OAuth origins/redirects.`);
-// });
