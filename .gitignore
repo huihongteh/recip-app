@@ -1,0 +1,17 @@
+# .gitignore
+
+# Dependencies
+node_modules
+
+# Environment Variables File (contains secrets!)
+.env
+
+# Log files
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Optional: Operating system files
+.DS_Store
+Thumbs.db

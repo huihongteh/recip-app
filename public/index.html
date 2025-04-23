@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <!-- PWA & iOS Home Screen Enhancements -->
+    <link rel="manifest" href="/manifest.json">
+    <meta name="theme-color" content="#ffffff"> <!-- White background, nav bar provides color contrast -->
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="default"> <!-- Use default status bar style -->
+    <meta name="apple-mobile-web-app-title" content="Recip">
+    <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png"> <!-- Make sure you have this icon -->
+
+    <title>Recip</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="app-container">
+        <h1>Recip</h1>
+
+        <!-- Authentication Section -->
+        <div id="auth-container">
+            <button id="login_button">Login with Google</button>
+        </div>
+
+        <!-- Main Content Area - Switched by Navigation -->
+        <main id="main-content" style="display: none;"> <!-- Hide initially until login -->
+
+            <!-- 1. Upload Section -->
+            <section id="upload-section" class="content-section active-section">
+                <div id="upload-form">
+                    <form id="receiptForm">
+                        <label for="category">Category:</label>
+                        <select id="category" name="category" required>
+                            <option value="" disabled selected>Select Category</option>
+                            <option value="Entertainment">Entertainment</option>
+                            <option value="Petrol Toll and Parking">Petrol Toll and Parking</option>
+                            <option value="Upkeep of motor vehicles">Upkeep of motor vehicles</option>
+                            <option value="General Expenses">General Expenses</option>
+                            <option value="Free Gift for Client">Free Gift for Client</option>
+                        </select>
+
+                        <label for="receiptAmount">Amount:</label>
+                        <input type="number" id="receiptAmount" name="receiptAmount" step="0.01" min="0.01" placeholder="e.g., 150.00" required inputmode="decimal"> <!-- Added inputmode -->
+
+                        <div class="receipt-input-section">
+                           <label>Receipt Image:</label>
+                            <!-- Placeholder / Trigger Area -->
+                            <div id="receipt-placeholder" class="receipt-placeholder" style="display: flex;">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" fill="currentColor" class="bi bi-image" viewBox="0 0 16 16">
+                                    <path d="M6.002 5.5a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0z"/>
+                                    <path d="M2.002 1a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V3a2 2 0 0 0-2-2h-12zm12 1a1 1 0 0 1 1 1v6.5l-3.777-1.947a.5.5 0 0 0-.577.093l-3.71 3.71-2.66-1.772a.5.5 0 0 0-.63.062L1.002 12V3a1 1 0 0 1 1-1h12z"/>
+                                </svg>
+                                <span>Tap to add receipt image</span>
+                            </div>
+                            <!-- Selection Options (Initially Hidden) -->
+                            <div id="receipt-options" class="receipt-options" style="display: none;">
+                                <button type="button" id="galleryBtn">Choose from Gallery</button>
+                                <button type="button" id="cameraBtnNew">Use Camera</button>
+                                <button type="button" id="cancelChoiceBtn" class="btn-secondary">Cancel</button>
+                            </div>
+                            <!-- Camera View Area (Initially Hidden) -->
+                            <div id="camera-view" class="camera-view" style="display: none;">
+                                <video id="video" autoplay playsinline></video>
+                                <canvas id="canvas" style="display: none;"></canvas>
+                                <button type="button" id="snapBtn">Snap Photo</button>
+                                <button type="button" id="cancelCameraBtn" class="btn-secondary">Cancel Camera</button>
+                            </div>
+                            <!-- Image Preview Area (Initially Hidden) -->
+                            <div id="receipt-preview-container" class="receipt-preview-container" style="display: none;">
+                                <img id="receiptPreview" src="#" alt="Receipt Preview">
+                                <button type="button" id="removeReceiptBtn" class="btn-remove" title="Remove Image">×</button>
+                            </div>
+                            <!-- Hidden File Input -->
+                            <input type="file" id="receiptImageInputActual" name="receiptImage" accept="image/*" style="display: none;">
+                        </div><!-- End .receipt-input-section -->
+
+                        <button type="submit">Upload Receipt</button>
+                    </form>
+                    <div id="status"></div>
+                </div>
+            </section>
+
+            <!-- 2. History Section (Placeholder) -->
+            <section id="history-section" class="content-section">
+                <h2>History</h2>
+                <p>Receipt history will be displayed here.</p>
+                <!-- Content for history view goes here -->
+            </section>
+
+            <!-- 3. Setting Section (MODIFIED) -->
+            <section id="setting-section" class="content-section">
+                <h2>Settings</h2>
+
+                <!-- Profile Info Container -->
+                <div id="profile-info" class="profile-info" style="display: none;"> <!-- Hide until data loaded -->
+                    <img id="user-photo" src="#" alt="User profile picture">
+                    <h3 id="user-name">User Name</h3>
+                    <p id="user-email">user@example.com</p>
+                </div>
+
+                <!-- Logout Button MOVED here -->
+                <button id="signout_button" style="display: none;">Sign Out</button>
+
+            </section>
+        </main>
+
+        <!-- Bottom Navigation Bar -->
+        <nav id="bottom-nav" style="display: none;">
+            <button class="nav-item active" data-section="upload-section" id="nav-upload-btn">
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="currentColor" class="bi bi-cloud-arrow-up-fill" viewBox="0 0 16 16">
+                    <path d="M8 2a5.53 5.53 0 0 0-3.594 1.342c-.766.66-1.321 1.52-1.464 2.383C1.266 6.095 0 7.555 0 9.318 0 11.366 1.708 13 3.781 13h8.906C14.502 13 16 11.57 16 9.773c0-1.636-1.242-2.969-2.834-3.194C12.923 3.999 10.69 2 8 2zm2.354 5.146a.5.5 0 0 1-.708.708L8.5 6.707V10.5a.5.5 0 0 1-1 0V6.707L6.354 7.854a.5.5 0 1 1-.708-.708l2-2a.5.5 0 0 1 .708 0l2 2z"/>
+                </svg>
+                <span>Upload</span>
+            </button>
+            <button class="nav-item" data-section="history-section" id="nav-history-btn">
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="currentColor" class="bi bi-clock-history" viewBox="0 0 16 16">
+                    <path d="M8.515 1.019A7 7 0 0 0 8 1V0a8 8 0 0 1 .589.022l-.074.997zm2.004.45a7.003 7.003 0 0 0-.985-.299l.219-.976c.383.086.76.2 1.126.342l-.36.933zm1.37.71a7.01 7.01 0 0 0-.439-.27l.493-.87a8.025 8.025 0 0 1 .979.654l-.615.789a6.996 6.996 0 0 0-.418-.302zm1.834 1.798a6.99 6.99 0 0 0-.653-.796l.724-.69c.27.285.52.59.747.91l-.818.576zm.744 1.352a7.08 7.08 0 0 0-.214-.468l.893-.45a7.986 7.986 0 0 1 .45 1.088l-.95.313a7.023 7.023 0 0 0-.179-.483zm.53 2.507a6.991 6.991 0 0 0-.1-1.025l.985-.17c.067.386.106.778.116 1.17l-1 .025zm-.131 1.538c.033-.17.06-.339.081-.51l.993.123a7.957 7.957 0 0 1-.23 1.155l-.964-.267c.046-.165.086-.332.12-.501zm-.952 2.379c-.184-.29-.387-.56-.612-.804l.707-.707c.196.196.38.404.546.634l-.641.877zm-.967 1.42a7.003 7.003 0 0 0-.205-.32l.72-.73c.137.134.264.277.38.43l-.895.624zm-1.379.645a6.993 6.993 0 0 0-.27-.202l.72-.734c.117.094.23.194.336.303l-.785.635zM8 1a7 7 0 1 0 4.95 11.95A7 7 0 0 0 8 1z"/>
+                    <path d="M5.757 8.243L7 9.485V4.5a.5.5 0 0 1 1 0v5.217l1.646-1.646a.5.5 0 0 1 .708.708l-2.5 2.5a.5.5 0 0 1-.708 0l-2.5-2.5a.5.5 0 0 1 .708-.708z"/>
+                </svg>
+                <span>History</span>
+            </button>
+            <button class="nav-item" data-section="setting-section" id="nav-setting-btn">
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="currentColor" class="bi bi-gear-fill" viewBox="0 0 16 16">
+                    <path d="M9.405 1.05c-.413-1.4-2.397-1.4-2.81 0l-.1.34a1.464 1.464 0 0 1-2.105.872l-.31-.17c-1.283-.698-2.686.705-1.987 1.987l.169.311a1.464 1.464 0 0 1-.872 2.105l-.34.1c-1.4.413-1.4 2.397 0 2.81l.34.1a1.464 1.464 0 0 1 .872 2.105l-.17.31c-.698 1.283.705 2.686 1.987 1.987l.311-.169a1.464 1.464 0 0 1 2.105.872l.1.34c.413 1.4 2.397 1.4 2.81 0l.1-.34a1.464 1.464 0 0 1 2.105-.872l.31.17c1.283.698 2.686-.705 1.987-1.987l-.169-.311a1.464 1.464 0 0 1 .872-2.105l.34-.1c1.4-.413 1.4-2.397 0-2.81l-.34-.1a1.464 1.464 0 0 1-.872-2.105l.17-.31c.698-1.283-.705-2.686-1.987-1.987l-.311.169a1.464 1.464 0 0 1-2.105-.872l-.1-.34zM8 10.93a2.929 2.929 0 1 1 0-5.86 2.929 2.929 0 0 1 0 5.858z"/>
+                </svg>
+                <span>Settings</span>
+            </button>
+        </nav>
+
+    </div><!-- end .app-container -->
+
+    <script src="script.js"></script>
+</body>
+</html>
