@@ -2,20 +2,18 @@
 require('dotenv').config();
 
 const express = require('express');
+const session = require('express-session');
+const { Pool } = require('pg'); // Require the Pool class from 'pg'
+const pgSession = require('connect-pg-simple')(session); // Pass 'session' to connect-pg-simple
 const multer = require('multer');
 const { google } = require('googleapis');
 const fs = require('fs');
 const path = require('path');
 const stream = require('stream');
 const vision = require('@google-cloud/vision');
-const session = require('express-session');
 const { format, toZonedTime } = require('date-fns-tz');
 // Optional: If using MongoDB for session storage
 // const MongoStore = require('connect-mongo');
-
-const session = require('express-session');
-const pgSession = require('connect-pg-simple')(session);
-const { Pool } = require('pg'); // Use pg Pool
 
 const app = express();
 
@@ -30,26 +28,79 @@ const SESSION_SECRET = process.env.SESSION_SECRET;
 const PORT = process.env.PORT || 3000;
 const TIME_ZONE = 'Asia/Kuala_Lumpur'
 
-// Create a Pool instance using the DATABASE_URL environment variable
+// ... config loading ...
+const IS_PRODUCTION = process.env.NODE_ENV === 'production';
+
+// --- Conditionally configure Pool and Store ---
+let sessionStore; // Define store variable
+
+if (IS_PRODUCTION) {
+    console.log("Production environment detected. Configuring PostgreSQL session store.");
+    const databaseUrl = process.env.DATABASE_URL;
+    if (!databaseUrl) {
+        console.error("FATAL ERROR: DATABASE_URL environment variable not set in production!");
+        process.exit(1); // Exit if DB URL missing in production
+    }
+    const pool = new Pool({
+        connectionString: databaseUrl,
+        ssl: { rejectUnauthorized: false }
+    });
+    pool.on('error', (err, client) => { console.error('!!! PostgreSQL Pool Error:', err); });
+
+    sessionStore = new pgSession({ // Assign pgSession to store
+        pool: pool,
+        tableName: 'user_sessions',
+        createTableIfMissing: true
+    });
+    console.log("PostgreSQL Pool and Session Store configured for production.");
+
+} else {
+    console.log("Development environment detected. Using MemoryStore for sessions.");
+    // MemoryStore is the default, so we don't explicitly set store = new session.MemoryStore()
+    // But clear log indicates what's happening.
+    sessionStore = undefined; // Use default MemoryStore
+    // Print the warning only in development
+    console.warn("Warning: Using MemoryStore for sessions. Data will be lost on server restart.");
+}
+
+// --- Create PostgreSQL Pool ---
+// Ensure DATABASE_URL is loaded from process.env correctly
+const databaseUrl = process.env.DATABASE_URL;
+if (!databaseUrl) {
+    console.warn("WARNING: DATABASE_URL environment variable not set. Persistent sessions may fail.");
+    // Optionally exit if DB is critical: process.exit(1);
+}
+
 const pool = new Pool({
-    connectionString: process.env.DATABASE_URL,
-    ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false // Required for Render DB connections
+    connectionString: databaseUrl, // Use the environment variable
+    ssl: {
+        // Required for Render database connections unless connecting from within the same private network AND configured not to require SSL
+        rejectUnauthorized: false
+    }
 });
 
-app.use(session({
-    store: new pgSession({
-        pool: pool,                // Connection pool
-        tableName: 'user_sessions' // Optional: Define table name
-    }),
-    secret: SESSION_SECRET,
-    resave: false,
-    saveUninitialized: false,
-    cookie: {
-        secure: process.env.NODE_ENV === 'production', // Should be true in production
-        httpOnly: true,
-        maxAge: 1000 * 60 * 60 * 24 * 30 // 30 days
-    }
-}));
+pool.on('error', (err, client) => {
+  console.error('!!! PostgreSQL Pool Error:', err); // Add pool error listener
+});
+
+// // --- Session Configuration (Using PostgreSQL Store) ---
+// app.use(session({
+//     // Use pgSession as the store
+//     store: new pgSession({
+//         pool: pool,                // Use the Pool instance created above
+//         tableName: 'user_sessions', // Optional: specify table name (defaults to 'session')
+//         createTableIfMissing: true // Optional: Automatically create the session table
+//     }),
+//     secret: process.env.SESSION_SECRET, // Read from environment
+//     resave: false,                      // Recommended: Don't save session if unmodified
+//     saveUninitialized: false,           // Recommended: Don't create session until something stored
+//     cookie: {
+//         secure: process.env.NODE_ENV === 'production', // IMPORTANT: Set NODE_ENV=production in Render env vars
+//         httpOnly: true,                    // Good practice: Prevents client-side JS access
+//         maxAge: 1000 * 60 * 60 * 24 * 30   // Example: 30 day session cookie lifetime
+//         // sameSite: 'lax' // Consider adding for CSRF protection
+//     }
+// }));
 
 // --- Essential Variable Checks ---
 if (!CLIENT_ID || !CLIENT_SECRET || !REDIRECT_URI) {
@@ -67,18 +118,32 @@ if (!SESSION_SECRET || SESSION_SECRET === 'PASTE_YOUR_GENERATED_SESSION_SECRET_H
      console.warn('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n');
 }
 
-// --- Session Configuration ---
+// // --- Session Configuration ---
+// app.use(session({
+//     secret: SESSION_SECRET,
+//     resave: false,
+//     saveUninitialized: false,
+//     cookie: {
+//         // secure: process.env.NODE_ENV === 'production', // Use secure cookies in production (requires HTTPS)
+//         httpOnly: true,
+//         maxAge: 1000 * 60 * 60 * 24 * 30 // 30 days
+//     },
+//     // store: MongoStore.create({ mongoUrl: process.env.MONGODB_URI }) // Example using env var for DB connection
+// }));
+
+// --- Session Configuration (Uses the conditionally defined store) ---
 app.use(session({
-    secret: SESSION_SECRET,
+    store: sessionStore, // Use the configured store (pgSession in prod, undefined/MemoryStore in dev)
+    secret: process.env.SESSION_SECRET,
     resave: false,
     saveUninitialized: false,
     cookie: {
-        // secure: process.env.NODE_ENV === 'production', // Use secure cookies in production (requires HTTPS)
+        secure: IS_PRODUCTION, // Secure cookie only in production
         httpOnly: true,
-        maxAge: 1000 * 60 * 60 * 24 * 30 // 30 days
-    },
-    // store: MongoStore.create({ mongoUrl: process.env.MONGODB_URI }) // Example using env var for DB connection
+        maxAge: 1000 * 60 * 60 * 24 * 30
+    }
 }));
+console.log(`Express session configured using ${IS_PRODUCTION ? 'PostgreSQL store' : 'MemoryStore (default)'}.`);
 
 // --- Google Clients ---
 const oauth2Client = new google.auth.OAuth2(CLIENT_ID, CLIENT_SECRET, REDIRECT_URI);
