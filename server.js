@@ -83,25 +83,6 @@ pool.on('error', (err, client) => {
   console.error('!!! PostgreSQL Pool Error:', err); // Add pool error listener
 });
 
-// // --- Session Configuration (Using PostgreSQL Store) ---
-// app.use(session({
-//     // Use pgSession as the store
-//     store: new pgSession({
-//         pool: pool,                // Use the Pool instance created above
-//         tableName: 'user_sessions', // Optional: specify table name (defaults to 'session')
-//         createTableIfMissing: true // Optional: Automatically create the session table
-//     }),
-//     secret: process.env.SESSION_SECRET, // Read from environment
-//     resave: false,                      // Recommended: Don't save session if unmodified
-//     saveUninitialized: false,           // Recommended: Don't create session until something stored
-//     cookie: {
-//         secure: process.env.NODE_ENV === 'production', // IMPORTANT: Set NODE_ENV=production in Render env vars
-//         httpOnly: true,                    // Good practice: Prevents client-side JS access
-//         maxAge: 1000 * 60 * 60 * 24 * 30   // Example: 30 day session cookie lifetime
-//         // sameSite: 'lax' // Consider adding for CSRF protection
-//     }
-// }));
-
 // --- Essential Variable Checks ---
 if (!CLIENT_ID || !CLIENT_SECRET || !REDIRECT_URI) {
     console.error('FATAL ERROR: Google OAuth credentials (CLIENT_ID, CLIENT_SECRET, REDIRECT_URI) not configured in .env file.');
@@ -117,19 +98,6 @@ if (!SESSION_SECRET || SESSION_SECRET === 'PASTE_YOUR_GENERATED_SESSION_SECRET_H
      console.warn('Generate one using: node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'hex\'))"');
      console.warn('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n');
 }
-
-// // --- Session Configuration ---
-// app.use(session({
-//     secret: SESSION_SECRET,
-//     resave: false,
-//     saveUninitialized: false,
-//     cookie: {
-//         // secure: process.env.NODE_ENV === 'production', // Use secure cookies in production (requires HTTPS)
-//         httpOnly: true,
-//         maxAge: 1000 * 60 * 60 * 24 * 30 // 30 days
-//     },
-//     // store: MongoStore.create({ mongoUrl: process.env.MONGODB_URI }) // Example using env var for DB connection
-// }));
 
 // --- Session Configuration (Uses the conditionally defined store) ---
 app.use(session({
@@ -199,6 +167,7 @@ app.get('/oauth2callback', async (req, res) => {
         oauth2Client.setCredentials(tokens);
 
         // --- Store tokens in session ---
+        console.log("Callback: Setting session variables...");
         req.session.accessToken = tokens.access_token;
         req.session.expiryDate = tokens.expiry_date;
         if (tokens.refresh_token) { req.session.refreshToken = tokens.refresh_token; console.log("Refresh Token stored in session."); }
@@ -217,7 +186,7 @@ app.get('/oauth2callback', async (req, res) => {
                     email: userData.email,
                     picture: userData.picture
                 };
-                console.log("User Info stored in session:", req.session.user.email);
+                console.log("Callback: Session variables SET. isLoggedIn:", req.session.isLoggedIn, "User Email:", req.session.user?.email); // Use optional chaining ?.
             } else {
                  console.warn("No user data returned from Google userinfo endpoint.");
                  req.session.user = null; // Ensure it's null if fetch failed
@@ -249,13 +218,15 @@ app.get('/oauth2callback', async (req, res) => {
 
 // Route for frontend to check if user is logged in
 app.get('/api/check-auth', (req, res) => {
-    console.log("--- /api/check-auth called ---");
-    console.log("Session isLoggedIn value:", req.session ? req.session.isLoggedIn : 'N/A');
-    console.log("Session user value:", req.session ? req.session.user : 'N/A');
+    console.log("--- /api/check-auth ---");
+    console.log("Session ID:", req.sessionID); // Log Session ID
+    console.log("Session Object Exists:", !!req.session);
+    console.log("Session Keys:", req.session ? Object.keys(req.session) : 'N/A'); // What keys are in the session?
+    console.log("Session isLoggedIn value:", req.session?.isLoggedIn); // Use optional chaining
+    console.log("Session user value:", req.session?.user); // Use optional chaining
 
-    if (req.session && req.session.isLoggedIn && req.session.accessToken) {
-        // *** INCLUDE user info if available ***
-        res.json({ loggedIn: true, user: req.session.user || null }); // Send user data or null
+    if (req.session?.isLoggedIn && req.session?.accessToken) {
+        res.json({ loggedIn: true, user: req.session.user || null });
     } else {
         res.json({ loggedIn: false, user: null });
     }
