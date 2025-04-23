@@ -13,6 +13,10 @@ const { format, toZonedTime } = require('date-fns-tz');
 // Optional: If using MongoDB for session storage
 // const MongoStore = require('connect-mongo');
 
+const session = require('express-session');
+const pgSession = require('connect-pg-simple')(session);
+const { Pool } = require('pg'); // Use pg Pool
+
 const app = express();
 
 // --- Configuration from Environment Variables ---
@@ -25,6 +29,27 @@ const APP_FOLDER_NAME = process.env.GOOGLE_DRIVE_APP_FOLDER_NAME || 'ReceiptMana
 const SESSION_SECRET = process.env.SESSION_SECRET;
 const PORT = process.env.PORT || 3000;
 const TIME_ZONE = 'Asia/Kuala_Lumpur'
+
+// Create a Pool instance using the DATABASE_URL environment variable
+const pool = new Pool({
+    connectionString: process.env.DATABASE_URL,
+    ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false // Required for Render DB connections
+});
+
+app.use(session({
+    store: new pgSession({
+        pool: pool,                // Connection pool
+        tableName: 'user_sessions' // Optional: Define table name
+    }),
+    secret: SESSION_SECRET,
+    resave: false,
+    saveUninitialized: false,
+    cookie: {
+        secure: process.env.NODE_ENV === 'production', // Should be true in production
+        httpOnly: true,
+        maxAge: 1000 * 60 * 60 * 24 * 30 // 30 days
+    }
+}));
 
 // --- Essential Variable Checks ---
 if (!CLIENT_ID || !CLIENT_SECRET || !REDIRECT_URI) {
