@@ -17,6 +17,12 @@ const { format, toZonedTime } = require('date-fns-tz');
 
 const app = express();
 
+// --- TRUST PROXY ---
+// Required for secure cookies to work behind Render's load balancer/proxy
+app.set('trust proxy', 1); // Trust the first proxy hop (Render's LB)
+console.log("Configured Express to trust proxy.");
+// -----------------
+
 // --- Configuration from Environment Variables ---
 const CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
 const CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET;
@@ -100,15 +106,17 @@ if (!SESSION_SECRET || SESSION_SECRET === 'PASTE_YOUR_GENERATED_SESSION_SECRET_H
 }
 
 // --- Session Configuration (Uses the conditionally defined store) ---
+// --- Session Configuration ---
 app.use(session({
-    store: sessionStore, // Use the configured store (pgSession in prod, undefined/MemoryStore in dev)
+    store: sessionStore,
     secret: process.env.SESSION_SECRET,
     resave: false,
     saveUninitialized: false,
     cookie: {
-        secure: IS_PRODUCTION, // Secure cookie only in production
+        secure: process.env.NODE_ENV === 'production', // Keep this true for production
         httpOnly: true,
-        maxAge: 1000 * 60 * 60 * 24 * 30
+        maxAge: 1000 * 60 * 60 * 24 * 30,
+        // sameSite: 'lax' // Consider adding this too
     }
 }));
 console.log(`Express session configured using ${IS_PRODUCTION ? 'PostgreSQL store' : 'MemoryStore (default)'}.`);
