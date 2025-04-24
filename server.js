@@ -33,6 +33,13 @@ const APP_FOLDER_NAME = process.env.GOOGLE_DRIVE_APP_FOLDER_NAME || 'ReceiptMana
 const SESSION_SECRET = process.env.SESSION_SECRET;
 const PORT = process.env.PORT || 3000;
 const TIME_ZONE = 'Asia/Kuala_Lumpur'
+const PAYMENT_METHODS_STRING = process.env.PAYMENT_METHODS || 'Cash,Bank Transfer'; // Default if not set
+
+// --- Process Payment Methods ---
+// Split the string into an array, trim whitespace from each item
+const paymentMethodOptions = PAYMENT_METHODS_STRING.split(',')
+    .map(method => method.trim())
+    .filter(method => method.length > 0); // Remove empty strings if trailing/double commas exist
 
 // ... config loading ...
 const IS_PRODUCTION = process.env.NODE_ENV === 'production';
@@ -260,6 +267,16 @@ app.post('/api/logout', async (req, res) => {
     });
 });
 
+// --- API Endpoint to Get Payment Methods ---
+app.get('/api/payment-methods', (req, res) => {
+    // Simple check if user is logged in - maybe not strictly necessary
+    // but good practice if the list could be considered sensitive
+    if (!req.session || !req.session.isLoggedIn) {
+        return res.status(401).json({ message: 'User not authenticated.' });
+    }
+    res.json({ methods: paymentMethodOptions }); // Send the processed array
+});
+
 // --- Helper: Function to ensure valid access token ---
 async function ensureValidToken(req) {
     if (!req.session.isLoggedIn || !req.session.accessToken || !req.session.expiryDate) {
@@ -304,6 +321,7 @@ app.post('/upload', upload.single('receiptImage'), async (req, res) => {
     // Get data from request
     const category = req.body.category;
     const userAmount = req.body.amount; // Get amount from form data
+    const paymentMethod = req.body.paymentMethod;
     const file = req.file;
 
     // --- Generate Timestamps and Filename (UTC+8 / Asia/Kuala_Lumpur) ---
@@ -319,6 +337,12 @@ app.post('/upload', upload.single('receiptImage'), async (req, res) => {
         console.warn("Invalid amount received from client:", userAmount);
         return res.status(400).json({ message: 'Valid positive amount is required.' });
     }
+    if (!paymentMethod || !paymentMethodOptions.includes(paymentMethod)) { // Check if submitted method is in our allowed list
+        console.warn(`Invalid payment method submitted: ${paymentMethod}`);
+        // Optionally send back the allowed methods for debugging client-side issues
+        return res.status(400).json({ message: 'Invalid payment method selected.'/*, allowed: paymentMethodOptions */});
+   }
+
     const finalAmount = parseFloat(userAmount).toFixed(2); // Use validated & formatted amount
 
     // Format for Google Sheet (Human readable UTC+8)
@@ -333,7 +357,7 @@ app.post('/upload', upload.single('receiptImage'), async (req, res) => {
         fileExtension = mimeType ? `.${mimeType.replace('jpeg', 'jpg')}` : '.jpg'; // Default to jpg
     }
     const newFilename = `${filenameTimestamp}${fileExtension}`;
-    console.log(`Generated Filename: ${newFilename}, Sheet Timestamp: ${uploadTimestampSheet}`);
+    console.log(`Processing: Sheet Timestamp: ${uploadTimestampSheet}, Cat=${category}, Amt=${finalAmount}, Method=${paymentMethod}, File=${newFilename}`);
     // --- End Timestamp/Filename Generation ---
 
     try {
@@ -392,9 +416,9 @@ app.post('/upload', upload.single('receiptImage'), async (req, res) => {
                     extractedData.receiptDate, // B: Receipt Date (OCR)
                     finalAmount,             // C: Amount (User Input)
                     category,                // D: Category
-                    newFilename,             // E: File Name
-                    driveFileId              // F: Drive File ID
-                    // Adjust indices/order if your sheet layout is different!
+                    paymentMethod,           // E: Payment Method (NEW) - Adjust position if needed
+                    newFilename,             // F: File Name
+                    driveFileId              // G: Drive File ID
                 ];
                 const appendRequest = {
                     spreadsheetId: SPREADSHEET_ID, range: `${SHEET_NAME}!A1`, // Append after last data in sheet

@@ -44,6 +44,12 @@
                         <label for="receiptAmount">Amount:</label>
                         <input type="number" id="receiptAmount" name="receiptAmount" step="0.01" min="0.01" placeholder="e.g., 150.00" required inputmode="decimal"> <!-- Added inputmode -->
 
+                        <label for="paymentMethod">Payment Method:</label>
+                        <select id="paymentMethod" name="paymentMethod" required>
+                            <option value="" disabled selected>Loading methods...</option>
+                            <!-- Options will be populated by JavaScript -->
+                        </select>
+
                         <div class="receipt-input-section">
                            <label>Receipt Image:</label>
                             <!-- Placeholder / Trigger Area -->

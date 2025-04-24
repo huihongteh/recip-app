@@ -20,6 +20,7 @@ const receiptPreviewContainer = document.getElementById('receipt-preview-contain
 const receiptPreview = document.getElementById('receiptPreview');
 const removeReceiptBtn = document.getElementById('removeReceiptBtn');
 const receiptImageInputActual = document.getElementById('receiptImageInputActual');
+const paymentMethodSelect = document.getElementById('paymentMethod');
 
 // Main Content and Navigation elements
 const mainContent = document.getElementById('main-content');
@@ -49,12 +50,59 @@ function updateStatus(message, type = 'info') {
     console.log(`SCRIPT: Status Update (${type}): ${message}`); // Keep this log
 }
 
+// --- Function to Fetch and Populate Payment Methods ---
+async function loadPaymentMethods() {
+    // Reset dropdown to loading state initially
+    paymentMethodSelect.innerHTML = '<option value="" disabled selected>Loading methods...</option>';
+    paymentMethodSelect.disabled = true; // Disable while loading
+
+    try {
+        const response = await fetch('/api/payment-methods');
+        if (!response.ok) {
+            if (response.status === 401) {
+                 console.warn("Not authorized to fetch payment methods.");
+                 throw new Error("Not logged in"); // Throw specific error maybe
+            }
+            throw new Error(`HTTP error ${response.status}`);
+        }
+        const data = await response.json();
+
+        if (data?.methods?.length > 0) { // Check if methods array exists and is not empty
+            paymentMethodSelect.innerHTML = '<option value="" disabled selected>Select method</option>'; // Clear loading
+            data.methods.forEach(method => {
+                const option = document.createElement('option');
+                option.value = method;
+                option.textContent = method;
+                paymentMethodSelect.appendChild(option);
+            });
+            paymentMethodSelect.disabled = false; // Re-enable dropdown
+            return true; // Indicate success
+        } else {
+             console.warn("No payment methods data received or array is empty.");
+             // Keep disabled, show empty state
+             paymentMethodSelect.innerHTML = '<option value="" disabled selected>No methods found</option>';
+             // Don't throw error, just return false? Or let checkLoginStatus handle final message.
+             return false; // Indicate no methods loaded
+        }
+
+    } catch (error) {
+        console.error("Error fetching payment methods:", error);
+        if (error.message !== "Not logged in") { // Avoid double status update if just logged out
+            updateStatus('Could not load payment methods.', 'error');
+        }
+        paymentMethodSelect.innerHTML = '<option value="" disabled selected>Error loading</option>';
+        paymentMethodSelect.disabled = true;
+        throw error; // Re-throw error so checkLoginStatus knows loading failed
+    }
+}
+
 // --- Authentication Flow ---
 async function checkLoginStatus() {
     console.log("SCRIPT: checkLoginStatus() called.");
     let finalStatusMessage = 'Please sign in.'; // Default message
     let finalStatusType = 'info';
     let loggedInState = false;
+    let methodsLoaded = false;
 
     try {
         // Set initial checking status
@@ -69,14 +117,18 @@ async function checkLoginStatus() {
 
         currentUser = data.loggedIn ? data.user : null;
         loggedInState = data.loggedIn; // Store the logged-in state
-
+        
         // Determine the final message based on state
         if (loggedInState) {
+            // *** AWAIT the loading function ***
+            await loadPaymentMethods(); // Wait for fetch/populate to finish
+            methodsLoaded = true; // Mark as loaded (or handle errors within loadPaymentMethods)
+
             finalStatusMessage = 'Ready.'; // Or "Welcome, [Name]!" if currentUser exists
             finalStatusType = 'info'; // Or 'success' if preferred
         } else {
-             finalStatusMessage = 'Please sign in.';
-             finalStatusType = 'info';
+            finalStatusMessage = 'Please sign in.';
+            finalStatusType = 'info';
         }
 
     } catch (error) {
@@ -86,13 +138,20 @@ async function checkLoginStatus() {
         currentUser = null;
         loggedInState = false; // Ensure logged out on error
     } finally {
-        // --- This block runs regardless of try/catch outcome ---
-        console.log(`SCRIPT: checkLoginStatus finished. Updating UI with loggedInState = ${loggedInState}`);
-        updateUI(loggedInState); // Update the UI based on the determined state
+        // --- Update UI AFTER try/catch/await ---
+        console.log(`SCRIPT: checkLoginStatus finally. Updating UI, loggedInState = ${loggedInState}`);
+        updateUI(loggedInState);
 
-        // --- Set the FINAL status message AFTER UI update ---
-        console.log(`SCRIPT: Setting final status message: "${finalStatusMessage}"`);
-        updateStatus(finalStatusMessage, finalStatusType);
+        // --- Set final status AFTER UI update ---
+        // If an error occurred above, the status is already set to error
+        // If logged out, updateUI logic might handle it, or set here:
+        if (!loggedInState && statusDiv.textContent.indexOf('Error') === -1) { // Avoid overwriting specific errors
+             updateStatus('Please sign in.', 'info');
+        } else if (loggedInState && statusDiv.textContent.indexOf('Error') === -1) {
+             // Only set "Ready" if logged in and no error happened during load
+             updateStatus('Ready.', 'info');
+        }
+        console.log("SCRIPT: checkLoginStatus finished.");
     }
 }
 function handleLoginClick() {
@@ -199,6 +258,7 @@ function updateUI(isLoggedIn) {
         resetReceiptSection();
         currentUser = null;
         if(profileInfoDiv) profileInfoDiv.style.display = 'none';
+        if (paymentMethodSelect) paymentMethodSelect.innerHTML = '<option value="" disabled selected>Loading methods...</option>';
         // REMOVED: updateStatus('Please sign in.', 'info');
     }
 }
@@ -266,6 +326,7 @@ async function handleFormSubmit(event) {
     updateStatus('Processing...', 'info');
     const category = categorySelect.value;
     const userAmount = receiptAmountInput.value; // Get user amount
+    const paymentMethod = paymentMethodSelect.value;
     const imageBlobOrFile = imageFile;
 
     // Validation
@@ -273,15 +334,22 @@ async function handleFormSubmit(event) {
     if (!userAmount || isNaN(parseFloat(userAmount)) || parseFloat(userAmount) <= 0) {
         updateStatus('Enter valid positive amount.', 'error'); receiptAmountInput.focus(); return;
     }
+    // *** Payment Method Validation ***
+    if (!paymentMethod) {
+        updateStatus('Please select a payment method.', 'error');
+        paymentMethodSelect.focus();
+        return;
+    }
     if (!imageBlobOrFile) { updateStatus('Add receipt image.', 'error'); return; }
     // --- End Validation ---
 
     const amountFormatted = parseFloat(userAmount).toFixed(2);
-    console.log(`Uploading. Cat: ${category}, Amt: ${amountFormatted}, Img: ${imageBlobOrFile instanceof File ? 'File' : 'Blob'}`);
-    updateStatus('Uploading...', 'info');
+    console.log(`Uploading. Cat=${category}, Amt=${amountFormatted}, Method=${paymentMethod}, Img=${imageBlobOrFile.name || 'blob'}`);
+    updateStatus('Uploading... Please wait.', 'info');
     const formData = new FormData();
     formData.append('category', category);
     formData.append('amount', amountFormatted); // Send formatted amount
+    formData.append('paymentMethod', paymentMethod);
     const fileName = imageBlobOrFile.name || `receipt_${Date.now()}.jpg`;
     formData.append('receiptImage', imageBlobOrFile, fileName);
 
@@ -344,5 +412,8 @@ if ('serviceWorker' in navigator) {
 } else { console.log('Service workers not supported.'); }
 
 // --- Initial State ---
-document.addEventListener('DOMContentLoaded', checkLoginStatus);
-updateStatus('Initializing...', 'info');
+document.addEventListener('DOMContentLoaded', () => {
+    // Add this log INSIDE the event listener's callback function
+    console.log("SCRIPT: DOMContentLoaded event fired. Calling checkLoginStatus...");
+    checkLoginStatus(); // Call the function here
+});updateStatus('Initializing...', 'info');
