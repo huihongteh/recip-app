@@ -43,30 +43,72 @@ const paymentMethodOptions = PAYMENT_METHODS_STRING.split(',')
 
 // ... config loading ...
 const IS_PRODUCTION = process.env.NODE_ENV === 'production';
+const IS_LOCAL_DEV_DB = process.env.NODE_ENV === 'development_db';
+
+const CURRENT_NODE_ENV = process.env.NODE_ENV; // Get env variable once
+console.log(`Current NODE_ENV = ${CURRENT_NODE_ENV}`); // Log the actual value
 
 // --- Conditionally configure Pool and Store ---
 let sessionStore; // Define store variable
 
-if (IS_PRODUCTION) {
-    console.log("Production environment detected. Configuring PostgreSQL session store.");
+// --- Declare pool variable in the main module scope ---
+let pool; // Use 'let' so it can be assigned later
+
+if (IS_PRODUCTION || IS_LOCAL_DEV_DB) {
+    console.log(`${IS_PRODUCTION ? 'Production environment detected' : 'Development environment detected'}.`);
+    console.log("Configuring PostgreSQL session store.");
+
     const databaseUrl = process.env.DATABASE_URL;
     if (!databaseUrl) {
-        console.error("FATAL ERROR: DATABASE_URL environment variable not set in production!");
+        console.error(`FATAL ERROR: DATABASE_URL environment variable not set! Current NODE_ENV=${process.env.NODE_ENV}`);
         process.exit(1); // Exit if DB URL missing in production
     }
-    const pool = new Pool({
+    
+    // --- Define Pool Options ---
+    const poolOptions = {
         connectionString: databaseUrl,
-        ssl: { rejectUnauthorized: false }
-    });
-    pool.on('error', (err, client) => { console.error('!!! PostgreSQL Pool Error:', err); });
+        // Start with SSL undefined
+        ssl: undefined
+    };
 
-    sessionStore = new pgSession({ // Assign pgSession to store
-        pool: pool,
+    // --- Explicitly Add SSL ONLY for Production ---
+    if (CURRENT_NODE_ENV === 'production') {
+        console.log("NODE_ENV is 'production'. Enabling SSL for PostgreSQL.");
+        poolOptions.ssl = {
+            rejectUnauthorized: false // Required for Render database connections
+        };
+    } else {
+        console.log(`NODE_ENV is '${CURRENT_NODE_ENV}'. SSL for PostgreSQL is DISABLED.`);
+        // Explicitly ensure SSL is not set or is false if needed,
+        // but undefined is usually sufficient for pg client to default to non-SSL.
+        // poolOptions.ssl = false; // Generally not needed
+    }
+    // --- End Conditional SSL ---
+
+    try {
+        pool = new Pool(poolOptions); // Pass the constructed options object
+        pool.on('error', (err, client) => { console.error('!!! PostgreSQL Pool Error:', err); });
+        console.log(`PostgreSQL Pool configured successfully.`);
+    } catch (poolError) {
+        console.error("FATAL ERROR: Failed to initialize PostgreSQL Pool!");
+        console.error(poolError);
+        process.exit(1);
+    }
+
+    // --- Session Configuration (Use the pool variable) ---
+    // Ensure pool exists before configuring store
+    if (!pool) {
+        console.error("FATAL ERROR: Pool was not initialized before setting up session store.");
+        process.exit(1);
+    }
+    const sessionStore = new pgSession({
+        pool: pool, // Use the initialized pool
         tableName: 'user_sessions',
         createTableIfMissing: true
     });
-    console.log("PostgreSQL Pool and Session Store configured for production.");
 
+    console.log(`PostgreSQL Pool and Session Store configured for  current NODE_ENV=${process.env.NODE_ENV}`);
+    
 } else {
     console.log("Development environment detected. Using MemoryStore for sessions.");
     // MemoryStore is the default, so we don't explicitly set store = new session.MemoryStore()
@@ -75,26 +117,6 @@ if (IS_PRODUCTION) {
     // Print the warning only in development
     console.warn("Warning: Using MemoryStore for sessions. Data will be lost on server restart.");
 }
-
-// --- Create PostgreSQL Pool ---
-// Ensure DATABASE_URL is loaded from process.env correctly
-const databaseUrl = process.env.DATABASE_URL;
-if (!databaseUrl) {
-    console.warn("WARNING: DATABASE_URL environment variable not set. Persistent sessions may fail.");
-    // Optionally exit if DB is critical: process.exit(1);
-}
-
-const pool = new Pool({
-    connectionString: databaseUrl, // Use the environment variable
-    ssl: {
-        // Required for Render database connections unless connecting from within the same private network AND configured not to require SSL
-        rejectUnauthorized: false
-    }
-});
-
-pool.on('error', (err, client) => {
-  console.error('!!! PostgreSQL Pool Error:', err); // Add pool error listener
-});
 
 // --- Essential Variable Checks ---
 if (!CLIENT_ID || !CLIENT_SECRET || !REDIRECT_URI) {
@@ -120,13 +142,12 @@ app.use(session({
     resave: false,
     saveUninitialized: false,
     cookie: {
-        secure: process.env.NODE_ENV === 'production', // Keep this true for production
+        secure: CURRENT_NODE_ENV === 'production', // Use the flag consistently
         httpOnly: true,
-        maxAge: 1000 * 60 * 60 * 24 * 30,
-        // sameSite: 'lax' // Consider adding this too
+        maxAge: 1000 * 60 * 60 * 24 * 30
     }
 }));
-console.log(`Express session configured using ${IS_PRODUCTION ? 'PostgreSQL store' : 'MemoryStore (default)'}.`);
+console.log(`Express session configured using PostgreSQL store (NODE_ENV=${CURRENT_NODE_ENV}).`);
 
 // --- Google Clients ---
 console.log(`--- Initializing OAuth2 Client ---`); // Add log
@@ -163,108 +184,216 @@ app.get('/auth/google', (req, res) => {
         'https://www.googleapis.com/auth/spreadsheets',
         'profile', 'email'
     ];
-    const authorizeUrl = oauth2Client.generateAuthUrl({ access_type: 'offline', scope: scopes });
-    console.log("Redirecting to Google for authentication...");
+    const authorizeUrl = oauth2Client.generateAuthUrl({ access_type: 'offline', scope: scopes, prompt: 'select_account' });
+    console.log("Redirecting to Google for authentication (with account selection)...");
     res.redirect(authorizeUrl);
 });
 
 // Route Google redirects to after user consent
 app.get('/oauth2callback', async (req, res) => {
     const code = req.query.code;
-    console.log("Received callback from Google.");
-    if (!code) { /* ... handle missing code ... */ }
+    console.log("Callback: Received callback from Google.");
+    if (!code) { return res.status(400).send('Authorization code missing.'); }
+
+    let userRecord = null; // To store the user record from our DB
+
     try {
-        console.log("Exchanging authorization code for tokens...");
+        console.log("Callback: Exchanging code for tokens...");
         const { tokens } = await oauth2Client.getToken(code);
-        console.log("Tokens received:", { refresh_token: tokens.refresh_token ? 'Present' : 'N/A', expiry_date: tokens.expiry_date });
+        console.log("Callback: Tokens received.");
+        oauth2Client.setCredentials(tokens); // Set credentials for userinfo call
 
-        // --- Set credentials for subsequent API calls ---
-        oauth2Client.setCredentials(tokens);
+        // --- Fetch User Info from Google ---
+        console.log("Callback: Fetching Google user info...");
+        const userInfoResponse = await googleOAuth2.userinfo.get({ auth: oauth2Client });
+        const googleUserInfo = userInfoResponse.data;
 
-        // --- Store tokens in session ---
-        console.log("Callback: Setting session variables...");
+        if (!googleUserInfo || !googleUserInfo.id || !googleUserInfo.email) {
+            throw new Error("Failed to retrieve valid user info from Google.");
+        }
+        console.log("Callback: Google User Info:", googleUserInfo.email);
+
+        // --- Find or Create User in 'users' table ---
+        const findUserQuery = 'SELECT * FROM users WHERE google_id = $1';
+        const findUserResult = await pool.query(findUserQuery, [googleUserInfo.id]);
+
+        if (findUserResult.rows.length > 0) {
+            // User Found - Update existing record
+            console.log(`Callback: User found in DB (ID: ${findUserResult.rows[0].user_id}). Updating...`);
+            userRecord = findUserResult.rows[0];
+            const updateUserQuery = `
+                UPDATE users
+                SET name = $1, picture_url = $2, last_login_at = NOW()
+                WHERE user_id = $3
+                RETURNING *;`; // Return updated record
+            const updateUserResult = await pool.query(updateUserQuery, [
+                googleUserInfo.name || 'N/A', // Use name from Google or default
+                googleUserInfo.picture,
+                userRecord.user_id
+            ]);
+            userRecord = updateUserResult.rows[0]; // Update local record variable
+             console.log(`Callback: User record updated for ${userRecord.email}.`);
+        } else {
+            // User Not Found - Create new record
+            console.log("Callback: User not found in DB. Creating new user...");
+            const insertUserQuery = `
+                INSERT INTO users (google_id, email, name, picture_url, last_login_at)
+                VALUES ($1, $2, $3, $4, NOW())
+                RETURNING *;`; // Return the newly created record
+            const insertUserResult = await pool.query(insertUserQuery, [
+                googleUserInfo.id,
+                googleUserInfo.email,
+                googleUserInfo.name || 'N/A',
+                googleUserInfo.picture
+            ]);
+            userRecord = insertUserResult.rows[0];
+            console.log(`Callback: New user created with ID: ${userRecord.user_id}, Email: ${userRecord.email}.`);
+        }
+
+        // --- Session Setup ---
+        console.log("Callback: Setting session data...");
         req.session.accessToken = tokens.access_token;
         req.session.expiryDate = tokens.expiry_date;
-        if (tokens.refresh_token) { req.session.refreshToken = tokens.refresh_token; console.log("Refresh Token stored in session."); }
-        req.session.isLoggedIn = true; // Mark user as logged in FIRST
+        if (tokens.refresh_token) { req.session.refreshToken = tokens.refresh_token; }
+        req.session.isLoggedIn = true;
+        // Store internal user ID and maybe basic display info
+        req.session.userId = userRecord.user_id;
+        // Optional: Store basic info directly for immediate display, but /api/check-auth should be source of truth
+        // req.session.userDisplay = { name: userRecord.name, picture: userRecord.picture_url };
+        console.log(`Callback: Session data set. User ID: ${req.session.userId}, Session ID: ${req.sessionID}`);
 
-        // --- Fetch User Info ---
-        try {
-            console.log("Fetching user info from Google...");
-            const userInfoResponse = await googleOAuth2.userinfo.get({ auth: oauth2Client }); // Use the authenticated client
-            const userData = userInfoResponse.data;
-            if (userData) {
-                // Store relevant info in session
-                req.session.user = {
-                    id: userData.id,
-                    name: userData.name,
-                    email: userData.email,
-                    picture: userData.picture
-                };
-                console.log("Callback: Session variables SET. isLoggedIn:", req.session.isLoggedIn, "User Email:", req.session.user?.email); // Use optional chaining ?.
-            } else {
-                 console.warn("No user data returned from Google userinfo endpoint.");
-                 req.session.user = null; // Ensure it's null if fetch failed
-            }
-        } catch(userInfoError) {
-             console.error("Error fetching user info:", userInfoError.message);
-             req.session.user = null; // Ensure it's null on error
-        }
-        // --- End Fetch User Info ---
+        // --- Link Session ID in users table ---
+        // Note: req.session.save() happens implicitly before redirect usually,
+        // ensuring sessionID is available. We update the users table *after* session is set.
+        const updateSessionLinkQuery = `
+            UPDATE users
+            SET current_session_id = $1
+            WHERE user_id = $2;`;
+        await pool.query(updateSessionLinkQuery, [req.sessionID, userRecord.user_id]);
+        console.log(`Callback: Linked session ID ${req.sessionID} to user ID ${userRecord.user_id} in users table.`);
 
-
-        console.log("User session established.");
-        // Explicitly save session before redirect
-        req.session.save(err => {
-            if (err) {
-                console.error("Error saving session before redirect:", err);
-                // Proceed with redirect even if save fails? Or send error?
-                // Let's redirect for now, but log the error.
-            }
-            console.log("Session saved, redirecting to /");
-            res.redirect('/');
-        });
+        // --- Redirect ---
+        // Explicit save isn't strictly necessary with persistent stores usually,
+        // but can help ensure things happen in order if needed. Redirect implies save.
+        console.log("Callback: Redirecting to /");
+        res.redirect('/');
 
     } catch (error) {
-        console.error('Error during OAuth callback:', error.response ? error.response.data : error.message);
-        res.status(500).send('Failed to authenticate with Google.');
+        console.error('Error during OAuth callback/User FindOrCreate:', error);
+        // Clear potentially partially set session data on error?
+        req.session.destroy(() => {
+            res.status(500).send('Failed to authenticate or process user information.');
+        });
     }
 });
 
 // Route for frontend to check if user is logged in
-app.get('/api/check-auth', (req, res) => {
+app.get('/api/check-auth', async (req, res) => { // Make async
     console.log("--- /api/check-auth ---");
-    console.log("Session ID:", req.sessionID); // Log Session ID
-    console.log("Session Object Exists:", !!req.session);
-    console.log("Session Keys:", req.session ? Object.keys(req.session) : 'N/A'); // What keys are in the session?
-    console.log("Session isLoggedIn value:", req.session?.isLoggedIn); // Use optional chaining
-    console.log("Session user value:", req.session?.user); // Use optional chaining
+    console.log("Session ID:", req.sessionID);
+    console.log("Session Keys:", req.session ? Object.keys(req.session) : 'N/A');
+    console.log("Session isLoggedIn:", req.session?.isLoggedIn);
+    console.log("Session userId:", req.session?.userId);
 
-    if (req.session?.isLoggedIn && req.session?.accessToken) {
-        res.json({ loggedIn: true, user: req.session.user || null });
+    // Check for basic session validity and internal userId
+    if (req.session?.isLoggedIn && req.session?.userId) {
+        try {
+            // Fetch current user details from DB using the stored userId
+            const getUserQuery = 'SELECT user_id, email, name, picture_url FROM users WHERE user_id = $1';
+            const userResult = await pool.query(getUserQuery, [req.session.userId]);
+
+            if (userResult.rows.length > 0) {
+                const userFromDb = userResult.rows[0];
+                console.log("Check-auth: Found user in DB, sending details.");
+                // Send details fetched from *your* database
+                res.json({
+                    loggedIn: true,
+                    user: { // Map DB fields to expected frontend fields if needed
+                        id: userFromDb.user_id, // Use your internal ID or keep consistent
+                        email: userFromDb.email,
+                        name: userFromDb.name,
+                        picture: userFromDb.picture_url
+                    }
+                });
+            } else {
+                // User existed in session but not in DB? Session corruption? Log out.
+                console.error(`Check-auth: User ID ${req.session.userId} found in session but not in DB! Destroying session.`);
+                 req.session.destroy(() => {
+                     res.clearCookie('connect.sid');
+                     res.status(401).json({ loggedIn: false, user: null, message: "Session invalid." });
+                 });
+            }
+        } catch (dbError) {
+            console.error("Check-auth: Database error fetching user:", dbError);
+            res.status(500).json({ loggedIn: false, user: null, message: "Error fetching user data." });
+        }
     } else {
+        // Not logged in according to session
+        console.log("Check-auth: No valid session found.");
         res.json({ loggedIn: false, user: null });
     }
 });
 
 // Route for user logout
 app.post('/api/logout', async (req, res) => {
-    console.log("Logout request received.");
+    console.log("Logout: Request received.");
+    // Get data needed BEFORE destroying the session
+    const userId = req.session.userId;
+    const sessionId = req.sessionID;
     const refreshToken = req.session.refreshToken;
-    req.session.destroy(async (err) => {
-        if (err) { /* ... handle session destroy error ... */ }
-        res.clearCookie('connect.sid');
-        if (refreshToken) {
+
+    console.log(`Logout: User ID: ${userId}, Session ID: ${sessionId}`);
+
+    try {
+        // 1. Clear Session Link in 'users' table (if user ID is known)
+        if (userId && sessionId) {
             try {
-                console.log("Attempting to revoke refresh token...");
-                const revokeClient = new google.auth.OAuth2(CLIENT_ID, CLIENT_SECRET, REDIRECT_URI);
-                await revokeClient.revokeToken(refreshToken);
-                console.log("Refresh token revoked successfully.");
-            } catch (revokeError) { console.error("Error revoking refresh token:", revokeError.message); }
-        } else { console.log("No refresh token found in session to revoke."); }
-        console.log("Session destroyed, user logged out.");
-        res.status(200).json({ message: "Logged out successfully." });
-    });
+                 console.log(`Logout: Clearing current_session_id for user ${userId}`);
+                 const updateQuery = `UPDATE users SET current_session_id = NULL WHERE user_id = $1 AND current_session_id = $2`;
+                 const updateResult = await pool.query(updateQuery, [userId, sessionId]);
+                 console.log(`Logout: Rows updated in users table: ${updateResult.rowCount}`);
+            } catch (dbError) {
+                 console.error("Logout: Error clearing session ID in users table:", dbError);
+                 // Continue with logout even if this fails? Or report error? Let's continue for now.
+            }
+        } else {
+             console.warn("Logout: Cannot clear session link in DB - userId or sessionId missing from session.");
+        }
+
+        // 2. Destroy Server-Side Session (removes row from user_sessions/session table)
+        req.session.destroy(async (err) => {
+            if (err) {
+                console.error("Logout: Error destroying session:", err);
+                // Still try to clear cookie and revoke token? Maybe send error earlier.
+                 return res.status(500).json({ message: "Logout failed (session destroy error)." });
+            }
+            console.log("Logout: Session destroyed successfully.");
+
+            // 3. Clear Client-Side Session Cookie
+            res.clearCookie('connect.sid');
+
+            // 4. Revoke Google Refresh Token
+            if (refreshToken) {
+                try {
+                    console.log("Logout: Attempting to revoke refresh token...");
+                    const revokeClient = new google.auth.OAuth2(CLIENT_ID, CLIENT_SECRET, REDIRECT_URI);
+                    await revokeClient.revokeToken(refreshToken);
+                    console.log("Logout: Refresh token revoked successfully.");
+                } catch (revokeError) {
+                    console.error("Logout: Error revoking refresh token:", revokeError.message);
+                }
+            } else { console.log("Logout: No refresh token found in session to revoke."); }
+
+            // 5. Send Success Response
+            console.log("Logout: Process complete.");
+            res.status(200).json({ message: "Logged out successfully." });
+        });
+
+    } catch (outerError) {
+         // Catch errors from DB update before session destroy, though unlikely
+         console.error("Logout: Unexpected error before session destroy:", outerError);
+         res.status(500).json({ message: "Logout failed (unexpected error)." });
+    }
 });
 
 // --- API Endpoint to Get Payment Methods ---

@@ -38,7 +38,7 @@ const userEmail = document.getElementById('user-email');
 let stream = null;
 let imageFile = null; // Stores the selected File or captured Blob
 let imagePreviewUrl = null; // Store the object URL for cleanup
-let currentUser = null; // ADDED: To store user info locally
+let currentUser = null; // To store user info locally
 
 // --- Helper Function to Update Status Message ---
 function updateStatus(message, type = 'info') {
